@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Confidence Coach — AI Session Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div class="grain"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand__dot" id="liveDot"></span>
+    <span class="brand__name">CONFIDENCE&nbsp;COACH</span>
+  </div>
+  <div class="stepper">
+    <div class="stepper__item is-active" data-step="1"><span>01</span>Capture</div>
+    <div class="stepper__line"></div>
+    <div class="stepper__item" data-step="2"><span>02</span>Analyze</div>
+    <div class="stepper__line"></div>
+    <div class="stepper__item" data-step="3"><span>03</span>Results</div>
+  </div>
+  <div class="status-chip" id="apiStatus">
+    <span class="status-chip__dot"></span>
+    <span id="apiStatusText">connecting…</span>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ================= LEFT: CAPTURE PANEL ================= -->
+  <section class="panel capture-panel">
+    <div class="panel__head">
+      <h1>Record your session</h1>
+      <p>Feed the model with a live webcam take, an uploaded video, or an audio-only clip. You can combine all three.</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="webcam" role="tab">Webcam Session</button>
+      <button class="tab" data-tab="video" role="tab">Upload Video</button>
+      <button class="tab" data-tab="audio" role="tab">Upload / Record Audio</button>
+    </div>
+
+    <!-- WEBCAM TAB -->
+    <div class="tab-panel is-active" data-panel="webcam">
+      <div class="stage">
+        <video id="webcamPreview" class="stage__video" autoplay muted playsinline></video>
+        <div class="stage__overlay" id="webcamOverlay">
+          <button class="btn btn--ghost" id="enableCamBtn">Enable camera &amp; mic</button>
+        </div>
+        <div class="stage__rec" id="recBadge" hidden>
+          <span class="rec-dot"></span>REC <span id="recTimer">00:00</span>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="btn btn--primary" id="startRecBtn" disabled>Start recording</button>
+        <button class="btn btn--danger" id="stopRecBtn" hidden>Stop</button>
+        <button class="btn btn--secondary" id="retakeBtn" hidden>Retake</button>
+      </div>
+      <div class="upload-row" id="webcamUploadRow" hidden>
+        <div class="upload-row__meta">
+          <span id="webcamFileName">webcam-session.webm</span>
+          <span id="webcamFileSize" class="muted"></span>
+        </div>
+        <button class="btn btn--primary btn--sm" id="uploadWebcamBtn">Use this take</button>
+      </div>
+    </div>
+
+    <!-- VIDEO UPLOAD TAB -->
+    <div class="tab-panel" data-panel="video">
+      <label class="dropzone" id="videoDropzone" for="videoFileInput">
+        <div class="dropzone__icon">▤</div>
+        <div class="dropzone__text">Drop a video file here or click to browse</div>
+        <div class="dropzone__hint muted">MP4, WebM, MOV — up to 500MB</div>
+        <input type="file" id="videoFileInput" accept="video/*" hidden />
+      </label>
+      <div class="upload-row" id="videoUploadRow" hidden>
+        <div class="upload-row__meta">
+          <span id="videoFileName"></span>
+          <span id="videoFileSize" class="muted"></span>
+        </div>
+        <button class="btn btn--primary btn--sm" id="uploadVideoBtn">Use this file</button>
+      </div>
+    </div>
+
+    <!-- AUDIO TAB -->
+    <div class="tab-panel" data-panel="audio">
+      <div class="audio-capture">
+        <div class="waveform" id="waveform">
+          <canvas id="waveCanvas"></canvas>
+        </div>
+        <div class="controls">
+          <button class="btn btn--primary" id="startAudioBtn">Start recording</button>
+          <button class="btn btn--danger" id="stopAudioBtn" hidden>Stop</button>
+        </div>
+      </div>
+      <div class="or-divider"><span>or</span></div>
+      <label class="dropzone dropzone--compact" id="audioDropzone" for="audioFileInput">
+        <div class="dropzone__icon">♪</div>
+        <div class="dropzone__text">Drop an audio file or click to browse</div>
+        <input type="file" id="audioFileInput" accept="audio/*" hidden />
+      </label>
+      <div class="upload-row" id="audioUploadRow" hidden>
+        <div class="upload-row__meta">
+          <span id="audioFileName">audio-recording.webm</span>
+          <span id="audioFileSize" class="muted"></span>
+        </div>
+        <button class="btn btn--primary btn--sm" id="uploadAudioBtn">Use this clip</button>
+      </div>
+    </div>
+
+    <!-- COLLECTED INPUTS -->
+    <div class="collected">
+      <div class="collected__title">Inputs staged for this session</div>
+      <div class="collected__grid">
+        <div class="collected__item" id="chip-webcam"><span class="collected__label">Webcam</span><span class="collected__state">—</span></div>
+        <div class="collected__item" id="chip-video"><span class="collected__label">Video</span><span class="collected__state">—</span></div>
+        <div class="collected__item" id="chip-audio"><span class="collected__label">Audio</span><span class="collected__state">—</span></div>
+      </div>
+      <button class="btn btn--accent btn--block" id="analyzeBtn" disabled>Run confidence analysis</button>
+    </div>
+  </section>
+
+  <!-- ================= RIGHT: RESULTS PANEL ================= -->
+  <section class="panel results-panel">
+
+    <div class="empty-state" id="emptyState">
+      <div class="empty-state__gauge">
+        <svg viewBox="0 0 200 120" class="mini-arc">
+          <path d="M20,110 A80,80 0 0,1 180,110" fill="none" stroke="var(--surface-3)" stroke-width="10" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h2>No analysis yet</h2>
+      <p>Record or upload a session on the left, then run the analysis to see your confidence readout here.</p>
+    </div>
+
+    <div class="analyzing-state" id="analyzingState" hidden>
+      <div class="pulse-ring"></div>
+      <h2>Analyzing session…</h2>
+      <p id="analyzingHint">Running your inputs through the model.</p>
+    </div>
+
+    <div class="results-state" id="resultsState" hidden>
+      <div class="gauge-block">
+        <svg viewBox="0 0 220 140" class="arc-gauge">
+          <path class="arc-gauge__track" d="M20,120 A90,90 0 0,1 200,120" fill="none" stroke-width="14" stroke-linecap="round"/>
+          <path class="arc-gauge__fill" id="arcFill" d="M20,120 A90,90 0 0,1 200,120" fill="none" stroke-width="14" stroke-linecap="round"/>
+        </svg>
+        <div class="gauge-block__readout">
+          <span class="gauge-block__score" id="overallScore">--</span>
+          <span class="gauge-block__label">CONFIDENCE SCORE</span>
+        </div>
+      </div>
+
+      <div class="metrics-grid" id="metricsGrid"></div>
+
+      <div class="feedback-block">
+        <div class="feedback-block__title">Coaching notes</div>
+        <ul id="feedbackList"></ul>
+      </div>
+
+      <div class="sources-block">
+        <div class="sources-block__title">Signals used</div>
+        <div class="sources-block__row" id="sourcesRow"></div>
+      </div>
+
+      <button class="btn btn--secondary btn--block" id="newSessionBtn">Start a new session</button>
+    </div>
+
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span>Built for the ML confidence-coaching project · connects to your model via <code>/api/analyze/&lt;session_id&gt;</code></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
