@@ -32,6 +32,326 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 /* ---------------------------------------------------------------------
+   Session History (localStorage)
+   Newest session is the top entry; click an entry for its full page.
+   --------------------------------------------------------------------- */
+const HISTORY_KEY = "confidence_coach_history";
+
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveToHistory(result) {
+  const history = loadHistory();
+  history.push({
+    id             : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    date           : new Date().toLocaleString(),
+    ts             : Date.now(),
+    overall_score  : result.overall_score,
+    level          : result.level,
+    mode           : result.mode,
+    metrics        : result.metrics,
+    strengths      : result.explanation?.strengths  || [],
+    weaknesses     : result.explanation?.weaknesses || [],
+    tip            : result.coaching?.tip      || "",
+    exercise       : result.coaching?.exercise || "",
+    transcript     : result.transcript || "",
+    dominant_emotion: result.dominant_emotion || null,
+    inputs_used    : result.inputs_used || {},
+  });
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  console.log("[History] Saved session #" + history.length, history[history.length-1]);
+}
+
+/* Metric display config, shared by the stack rows and the detail page */
+const METRIC_LABELS = {
+  speaking_pace    : "Speaking Pace",
+  filler_words     : "Filler Cleanliness",
+  voice_steadiness : "Voice Steadiness",
+  pause_pattern    : "Pause Pattern",
+  audio_score      : "Audio Score",
+  face_score       : "Face Score",
+  facial_expression: "Facial Expression",
+};
+
+function scoreBand(score) {
+  return score >= 75 ? "high" : score >= 55 ? "mid" : "low";
+}
+
+function metricDisplay(key, val) {
+  if (key === "speaking_pace") return `${val} WPM`;
+  return `${val}%`;
+}
+
+/* Delta of a session against the one before it (null when there is none) */
+function sessionDelta(history, idx) {
+  if (idx <= 0) return null;
+  const prev = history[idx - 1].overall_score;
+  const cur  = history[idx].overall_score;
+  if (typeof prev !== "number" || typeof cur !== "number") return null;
+  return Math.round((cur - prev) * 10) / 10;
+}
+
+function deltaMarkup(delta) {
+  if (delta === null) {
+    return `<span class="stack-row__delta stack-row__delta--first">baseline</span>`;
+  }
+  if (Math.abs(delta) < 0.05) {
+    return `<span class="stack-row__delta stack-row__delta--flat">no change</span>`;
+  }
+  const up   = delta > 0;
+  const sign = up ? "+" : "−";
+  return `<span class="stack-row__delta stack-row__delta--${up ? "up" : "down"}">${up ? "▲" : "▼"} ${sign}${Math.abs(delta)}</span>`;
+}
+
+function renderHistory() {
+  const history = loadHistory();
+  const container = $("#sessionHistory");
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  if (history.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "history-empty";
+    empty.textContent = "No previous sessions yet. Complete an analysis to start tracking your progress.";
+    container.appendChild(empty);
+    return;
+  }
+
+  // ── Progress bar chart ──
+  const scores = history.map(h => h.overall_score);
+  const labels = history.map((h, i) => `S${i + 1}`);
+
+  const chart = document.createElement("div");
+  chart.className = "history-chart";
+  chart.innerHTML = `
+    <div class="history-chart__label">📈 Progress over ${history.length} session(s)</div>
+    <div class="history-chart__bars">
+      ${scores.map((s, i) => `
+        <div
+          class="history-chart__bar"
+          title="${labels[i]}: ${s}/100"
+          style="
+            height:${Math.max(8, (s / 100) * 70)}px;
+            background:${s >= 75 ? 'var(--confidence)' : s >= 55 ? 'var(--amber)' : 'var(--live)'};
+          "
+        >
+          <span class="history-chart__bar-val">${s}</span>
+        </div>
+      `).join("")}
+    </div>
+    <div class="history-chart__xlabels">
+      ${labels.map(l => `<div class="history-chart__xlabel">${l}</div>`).join("")}
+    </div>
+  `;
+  container.appendChild(chart);
+
+  // ── Session stack: newest session is the top entry ──
+  const stack = document.createElement("div");
+  stack.className = "history-stack";
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h          = history[i];
+    const sessionNum = i + 1;
+    const band       = scoreBand(h.overall_score);
+    const delta      = sessionDelta(history, i);
+
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "stack-row";
+    row.setAttribute("aria-label", `Open full details for session ${sessionNum}`);
+    row.innerHTML = `
+      <span class="stack-row__rank">${sessionNum}</span>
+      <span class="stack-row__main">
+        <span class="stack-row__date">${h.date || "Unknown date"}</span>
+        <span class="stack-row__meta">${h.level || "—"} · ${h.mode || "—"}</span>
+      </span>
+      <span class="stack-row__trend">${deltaMarkup(delta)}</span>
+      <span class="stack-row__score stack-row__score--${band}">${h.overall_score}</span>
+      <span class="stack-row__chevron" aria-hidden="true">›</span>
+    `;
+    row.addEventListener("click", () => openSessionDetail(i));
+
+    stack.appendChild(row);
+  }
+
+  container.appendChild(stack);
+
+  // ── Clear button ──
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "history-clear-btn";
+  clearBtn.textContent = "Clear All History";
+  clearBtn.addEventListener("click", () => {
+    if (confirm("Clear all session history?")) {
+      localStorage.removeItem(HISTORY_KEY);
+      renderHistory();
+    }
+  });
+  container.appendChild(clearBtn);
+}
+
+/* ---------------------------------------------------------------------
+   Full-page session detail
+   --------------------------------------------------------------------- */
+function openSessionDetail(index) {
+  const history = loadHistory();
+  const h = history[index];
+  const page = $("#sessionDetail");
+  if (!h || !page) return;
+
+  const sessionNum = index + 1;
+  const band       = scoreBand(h.overall_score);
+  const delta      = sessionDelta(history, index);
+  const isLatest   = index === history.length - 1;
+
+  $("#detailTitle").textContent = `Session ${sessionNum}`;
+  $("#detailSubtitle").textContent = h.date || "Unknown date";
+
+  // ── Hero: score + level + mode + trend vs previous ──
+  $("#detailScore").textContent = h.overall_score;
+  $("#detailScore").className = `detail-hero__score detail-hero__score--${band}`;
+  $("#detailLevel").textContent  = h.level || "—";
+  $("#detailMode").textContent   = h.mode  || "—";
+  $("#detailDelta").innerHTML    = isLatest
+    ? `<span class="stack-row__delta stack-row__delta--first">latest session</span>`
+    : deltaMarkup(delta);
+
+  // ── Metrics ──
+  const metricsBox = $("#detailMetrics");
+  metricsBox.innerHTML = "";
+  Object.keys(METRIC_LABELS).forEach((key) => {
+    const val = h.metrics?.[key];
+    if (val === null || val === undefined) return;
+    const isPace = key === "speaking_pace";
+    const barPct = isPace ? Math.min(val, 100) : Math.min(Math.max(val, 0), 100);
+    const row = document.createElement("div");
+    row.className = "metric-row";
+    row.innerHTML = `
+      <span class="metric-row__label">${METRIC_LABELS[key]}</span>
+      <span class="metric-row__track">
+        <span class="metric-row__fill" style="width:${barPct}%"></span>
+      </span>
+      <span class="metric-row__value">${metricDisplay(key, val)}</span>
+    `;
+    metricsBox.appendChild(row);
+  });
+  if (!metricsBox.children.length) {
+    metricsBox.innerHTML = `<p class="muted">No metrics recorded for this session.</p>`;
+  }
+
+  // ── Narrative sections ──
+  const notes = $("#detailNotes");
+  notes.innerHTML = "";
+
+  const section = (icon, title, items, color, cls) => {
+    if (!items?.length) return;
+    const sec = document.createElement("div");
+    sec.className = "history-card__section";
+    sec.innerHTML = `<div class="history-card__sec-title history-card__sec-title--${color}">${icon} ${title}</div>`;
+    items.forEach((text) => {
+      const p = document.createElement("div");
+      p.className = `history-card__sec-item history-card__sec-item--${cls}`;
+      p.textContent = text;
+      sec.appendChild(p);
+    });
+    notes.appendChild(sec);
+  };
+
+  section("✅", "Strengths",  h.strengths,  "green",  "green");
+  section("❌", "Areas to Improve", h.weaknesses, "red", "red");
+
+  if (h.tip || h.exercise) {
+    const sec = document.createElement("div");
+    sec.className = "history-card__section";
+    sec.innerHTML = `<div class="history-card__sec-title history-card__sec-title--amber">💡 Coaching</div>`;
+    if (h.tip) {
+      const p = document.createElement("div");
+      p.className = "history-card__sec-item history-card__sec-item--amber";
+      p.textContent = `Tip: ${h.tip}`;
+      sec.appendChild(p);
+    }
+    if (h.exercise) {
+      const p = document.createElement("div");
+      p.className = "history-card__sec-item history-card__sec-item--blue";
+      p.textContent = `Exercise: ${h.exercise}`;
+      sec.appendChild(p);
+    }
+    notes.appendChild(sec);
+  }
+
+  section("📝", "Transcript", h.transcript ? [h.transcript] : [], "muted", "muted");
+
+  // ── Signals used ──
+  const sources = $("#detailSources");
+  sources.innerHTML = "";
+  const used = Object.entries(h.inputs_used || {});
+  if (used.length) {
+    used.forEach(([key, on]) => {
+      const pill = document.createElement("span");
+      pill.className = "source-pill" + (on ? " is-active" : "");
+      pill.textContent = key;
+      sources.appendChild(pill);
+    });
+  }
+  $("#detailSourcesBlock").hidden = used.length === 0;
+
+  if (h.dominant_emotion) {
+    $("#detailEmotion").textContent = h.dominant_emotion;
+    $("#detailEmotionBlock").hidden = false;
+  } else {
+    $("#detailEmotionBlock").hidden = true;
+  }
+
+  // ── Prev / next navigation ──
+  $("#detailPrev").disabled = index <= 0;
+  $("#detailNext").disabled = index >= history.length - 1;
+  page.dataset.index = String(index);
+
+  page.hidden = false;
+  document.body.classList.add("detail-open");
+  window.scrollTo({ top: 0, behavior: "auto" });
+  $("#detailBack").focus();
+}
+
+function closeSessionDetail() {
+  const page = $("#sessionDetail");
+  if (!page || page.hidden) return;
+  page.hidden = true;
+  document.body.classList.remove("detail-open");
+}
+
+function stepSessionDetail(delta) {
+  const page = $("#sessionDetail");
+  if (!page || page.hidden) return;
+  const next = Number(page.dataset.index) + delta;
+  const history = loadHistory();
+  if (next < 0 || next >= history.length) return;
+  openSessionDetail(next);
+}
+
+function wireSessionDetail() {
+  const back = $("#detailBack");
+  if (back) back.addEventListener("click", closeSessionDetail);
+  const prev = $("#detailPrev");
+  if (prev) prev.addEventListener("click", () => stepSessionDetail(-1));
+  const next = $("#detailNext");
+  if (next) next.addEventListener("click", () => stepSessionDetail(1));
+
+  document.addEventListener("keydown", (e) => {
+    const page = $("#sessionDetail");
+    if (!page || page.hidden) return;
+    if (e.key === "Escape")     closeSessionDetail();
+    if (e.key === "ArrowLeft")  stepSessionDetail(-1);
+    if (e.key === "ArrowRight") stepSessionDetail(1);
+  });
+}
+
+/* ---------------------------------------------------------------------
    Boot
    --------------------------------------------------------------------- */
 window.addEventListener("DOMContentLoaded", async () => {
@@ -42,6 +362,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   wireVideoUpload();
   wireAudio();
   wireAnalyze();
+  wireSessionDetail();
+  renderHistory();
 });
 
 async function checkHealth() {
@@ -329,13 +651,12 @@ function setupWaveform(stream) {
   function draw() {
     state.rafHandle = requestAnimationFrame(draw);
     state.analyser.getByteFrequencyData(dataArray);
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const barWidth = (canvas.width / bufferLength) * 1.6;
     let x = 0;
     for (let i = 0; i < bufferLength; i++) {
       const barHeight = (dataArray[i] / 255) * canvas.height * 0.9;
-      const hue = 158; // teal
+      const hue = 158;
       ctx.fillStyle = `hsla(${hue}, 75%, 55%, ${0.35 + (dataArray[i] / 255) * 0.6})`;
       ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
       x += barWidth + 2;
@@ -401,7 +722,12 @@ async function runAnalysis() {
       throw new Error(err.detail || "Analysis failed");
     }
     const result = await res.json();
+
+    // Persist this session so the history stack stays up to date
+    saveToHistory(result);
+
     renderResults(result);
+    renderHistory();
     setStep(3);
   } catch (err) {
     $("#analyzingState").hidden = true;
@@ -424,7 +750,7 @@ function renderResults(result) {
   $("#analyzingState").hidden = true;
   $("#resultsState").hidden = false;
 
-  // Score + arc gauge
+  // ── Score + arc gauge ──
   const score = result.overall_score ?? 0;
   $("#overallScore").textContent = score;
 
@@ -433,44 +759,154 @@ function renderResults(result) {
   path.style.strokeDasharray = `${length}`;
   path.style.strokeDashoffset = `${length}`;
   path.style.stroke = scoreColor(score);
-  // force reflow then animate
   requestAnimationFrame(() => {
     const offset = length - (length * Math.min(score, 100)) / 100;
     path.style.strokeDashoffset = `${offset}`;
   });
 
-  // Metrics
+  // ── Metrics ──
   const grid = $("#metricsGrid");
   grid.innerHTML = "";
-  const labels = {
-    eye_contact: "Eye contact",
-    voice_clarity: "Voice clarity",
-    speaking_pace: "Speaking pace",
-    posture: "Posture",
-    filler_words: "Filler words",
-    facial_expression: "Expression",
+
+  const metricLabels = {
+    speaking_pace    : "Speaking Pace",
+    filler_words     : "Filler Cleanliness",
+    voice_steadiness : "Voice Steadiness",
+    pause_pattern    : "Pause Pattern",
+    facial_expression: "Facial Expression",
   };
-  Object.entries(result.metrics || {}).forEach(([key, value]) => {
+
+  // Only show these keys, skip nulls and raw scores
+  const showKeys = ['speaking_pace', 'filler_words', 'voice_steadiness', 'pause_pattern', 'facial_expression'];
+
+  showKeys.forEach((key) => {
+    const value = result.metrics?.[key];
+    if (value === null || value === undefined) return;
+
+    const label      = metricLabels[key] || key;
+    const barValue   = Math.min(Math.max(value, 0), 100);
+    const displayVal = key === 'speaking_pace' ? `${value} WPM` : `${value}%`;
+
     const row = document.createElement("div");
     row.className = "metric-row";
     row.innerHTML = `
-      <span class="metric-row__label">${labels[key] || key}</span>
-      <span class="metric-row__track"><span class="metric-row__fill" style="width:${value}%"></span></span>
-      <span class="metric-row__value">${value}</span>
+      <span class="metric-row__label">${label}</span>
+      <span class="metric-row__track">
+        <span class="metric-row__fill" style="width:${barValue}%"></span>
+      </span>
+      <span class="metric-row__value">${displayVal}</span>
     `;
     grid.appendChild(row);
   });
 
-  // Feedback
-  const list = $("#feedbackList");
-  list.innerHTML = "";
-  (result.feedback || []).forEach((tip) => {
-    const li = document.createElement("li");
-    li.textContent = tip;
-    list.appendChild(li);
-  });
+  // ── Feedback: XAI + Coaching ──
+  // Use a div container instead of ul/li to avoid CSS conflicts
+  const feedbackContainer = $("#feedbackList");
+  feedbackContainer.innerHTML = "";
 
-  // Sources
+  function addSection(icon, title, color, items, isText) {
+    const section = document.createElement("div");
+    section.style.cssText = `margin-bottom:12px;`;
+
+    const header = document.createElement("div");
+    header.style.cssText = `
+      font-size:0.78rem;font-weight:600;color:${color};
+      letter-spacing:0.03em;margin-bottom:6px;
+      font-family:var(--font-mono);text-transform:uppercase;
+    `;
+    header.textContent = `${icon} ${title}`;
+    section.appendChild(header);
+
+    items.forEach(text => {
+      const item = document.createElement("div");
+      item.style.cssText = `
+        font-size:0.86rem;
+        color:var(--text-dim);
+        background:var(--surface-2);
+        border:1px solid var(--border);
+        border-radius:var(--radius-sm);
+        padding:10px 12px;
+        margin-bottom:6px;
+        line-height:1.5;
+        ${isText ? 'color:var(--muted);font-size:0.82rem;' : ''}
+      `;
+      item.textContent = text;
+      section.appendChild(item);
+    });
+
+    feedbackContainer.appendChild(section);
+  }
+
+  // Strengths
+  const strengths = result.explanation?.strengths || [];
+  if (strengths.length > 0) {
+    addSection("✅", "Strengths", "var(--confidence)", strengths, false);
+  }
+
+  // Weaknesses
+  const weaknesses = result.explanation?.weaknesses || [];
+  if (weaknesses.length > 0) {
+    addSection("❌", "Areas to Improve", "var(--live)", weaknesses, false);
+  }
+
+  // RL Coaching
+  const tip      = result.coaching?.tip;
+  const exercise = result.coaching?.exercise;
+
+  if (tip || exercise) {
+    const coachSection = document.createElement("div");
+    coachSection.style.marginBottom = "12px";
+
+    const coachHeader = document.createElement("div");
+    coachHeader.style.cssText = `
+      font-size:0.78rem;font-weight:600;color:var(--amber);
+      letter-spacing:0.03em;margin-bottom:6px;
+      font-family:var(--font-mono);text-transform:uppercase;
+    `;
+    coachHeader.textContent = "💡 Coaching (RL Agent)";
+    coachSection.appendChild(coachHeader);
+
+    if (tip) {
+      const tipDiv = document.createElement("div");
+      tipDiv.style.cssText = `
+        font-size:0.86rem;color:var(--amber);
+        background:var(--amber-soft);
+        border:1px solid var(--amber);
+        border-radius:var(--radius-sm);
+        padding:10px 12px;margin-bottom:6px;line-height:1.5;
+      `;
+      tipDiv.textContent = `Tip: ${tip}`;
+      coachSection.appendChild(tipDiv);
+    }
+
+    if (exercise) {
+      const exDiv = document.createElement("div");
+      exDiv.style.cssText = `
+        font-size:0.86rem;color:#a0c4ff;
+        background:rgba(160,196,255,0.08);
+        border:1px solid rgba(160,196,255,0.2);
+        border-radius:var(--radius-sm);
+        padding:10px 12px;margin-bottom:6px;line-height:1.5;
+      `;
+      exDiv.textContent = `Exercise: ${exercise}`;
+      coachSection.appendChild(exDiv);
+    }
+
+    feedbackContainer.appendChild(coachSection);
+  }
+
+  // Transcript
+  if (result.transcript) {
+    addSection("📝", "Transcript", "var(--muted)", [result.transcript], true);
+  }
+
+  // Mode badge
+  const modeBadge = document.createElement("div");
+  modeBadge.style.cssText = "font-size:0.72rem;color:var(--muted);margin-top:4px;font-family:var(--font-mono);";
+  modeBadge.textContent = `Mode: ${result.mode}`;
+  feedbackContainer.appendChild(modeBadge);
+
+  // ── Sources ──
   const row = $("#sourcesRow");
   row.innerHTML = "";
   Object.entries(result.inputs_used || {}).forEach(([key, used]) => {
