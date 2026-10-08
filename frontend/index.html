@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
 
@@ -31,7 +31,7 @@
   </div>
 </header>
 
-<main class="layout">
+<main class="layout" id="mainLayout">
 
   <!-- ================= LEFT: CAPTURE PANEL ================= -->
   <section class="panel capture-panel">
@@ -174,12 +174,66 @@
 
   </section>
 
+  <!-- ================= BOTTOM: SESSION HISTORY ================= -->
+  <section class="panel history-panel">
+    <div class="panel__head">
+      <h2 class="history-panel__title">Session History</h2>
+      <p class="history-panel__sub">Your sessions, newest first. Select any entry to open its full report.</p>
+    </div>
+    <div id="sessionHistory"></div>
+  </section>
+
 </main>
+
+<!-- ================= FULL-PAGE SESSION DETAIL ================= -->
+<div class="detail-page" id="sessionDetail" hidden>
+  <div class="detail-page__bar">
+    <button class="btn btn--secondary" id="detailBack">← Back to history</button>
+    <div class="detail-page__heading">
+      <h2 class="detail-page__title" id="detailTitle">Session</h2>
+      <p class="detail-page__subtitle" id="detailSubtitle"></p>
+    </div>
+    <div class="detail-page__nav">
+      <button class="btn btn--ghost" id="detailPrev" title="Previous session (←)">‹</button>
+      <button class="btn btn--ghost" id="detailNext" title="Next session (→)">›</button>
+    </div>
+  </div>
+
+  <div class="detail-page__body">
+    <section class="detail-hero">
+      <div class="detail-hero__score" id="detailScore">--</div>
+      <div class="detail-hero__meta">
+        <span class="detail-hero__level" id="detailLevel">—</span>
+        <span class="detail-hero__mode" id="detailMode">—</span>
+        <span class="detail-hero__delta" id="detailDelta"></span>
+      </div>
+    </section>
+
+    <section class="detail-block">
+      <h3 class="detail-block__title">Metrics</h3>
+      <div class="metrics-grid" id="detailMetrics"></div>
+    </section>
+
+    <section class="detail-block">
+      <h3 class="detail-block__title">Coaching notes</h3>
+      <div id="detailNotes"></div>
+      <div class="detail-inline" id="detailEmotionBlock" hidden>
+        <span class="detail-inline__label">Dominant expression</span>
+        <span class="detail-inline__value" id="detailEmotion"></span>
+      </div>
+    </section>
+
+    <section class="detail-block" id="detailSourcesBlock" hidden>
+      <h3 class="detail-block__title">Signals used</h3>
+      <div class="sources-block__row" id="detailSources"></div>
+    </section>
+  </div>
+</div>
 
 <footer class="foot">
   <span>Built for the ML confidence-coaching project · connects to your model via <code>/api/analyze/&lt;session_id&gt;</code></span>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

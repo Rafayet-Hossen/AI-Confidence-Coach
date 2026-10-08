@@ -186,7 +186,8 @@ async def analyze(session_id: str):
         )
     except Exception as exc:  # surface model errors instead of a bare 500
         session["status"] = "error"
-        raise HTTPException(status_code=500, detail=f"Model inference failed: {exc}") from exc
+        import traceback
+        raise HTTPException(status_code=500, detail=f"Model inference failed: {exc}\n{traceback.format_exc()}") from exc
 
     session["status"] = "analyzed"
     session["result"] = result
